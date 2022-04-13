@@ -112,15 +112,18 @@ class PSMNet(nn.Module):
         flo: [B, 2, H, W] flow
         """
         # B,C,D,H,W to B,H,W,C,D
-        x = x.transpose(1,3).transpose(2,4)
+        x = x.transpose(1, 3).transpose(2, 4)
         B, H, W, C, D = x.size()
         x = x.view(B, -1, C, D)
         # mesh grid
-        xx = (calib /(self.down*4.))[:,None] / torch.arange(1, 1 + self.maxdepth//self.down, device='cuda').float()[None, :]
-        new_D = self.maxdepth//self.down
+        xx = (calib / (self.down * 4.))[:, None] / torch.arange(1, 1 + self.maxdepth // self.down,
+                                                                device='cuda' if torch.cuda.is_available() else 'cpu').float()[
+                                                   None, :]
+        new_D = self.maxdepth // self.down
         xx = xx.view(B, 1, new_D).repeat(1, C, 1)
         xx = xx.view(B, C, new_D, 1)
-        yy = torch.arange(0, C, device='cuda').view(-1, 1).repeat(1, new_D).float()
+        yy = torch.arange(0, C, device='cuda' if torch.cuda.is_available() else 'cpu').view(-1, 1).repeat(1,
+                                                                                                          new_D).float()
         yy = yy.view(1, C, new_D, 1).repeat(B, 1, 1, 1)
         grid = torch.cat((xx, yy), -1).float()
 
@@ -131,9 +134,8 @@ class PSMNet(nn.Module):
         vgrid[:, :, :, 1] = 2.0 * vgrid[:, :, :, 1] / max(C - 1, 1) - 1.0
 
         output = nn.functional.grid_sample(x, vgrid).contiguous()
-        output = output.view(B, H, W, C, new_D).transpose(1,3).transpose(2,4)
+        output = output.view(B, H, W, C, new_D).transpose(1, 3).transpose(2, 4)
         return output.contiguous()
-
 
     def forward(self, left, right, calib, out_std=False, out_cost_volume=False):
 
@@ -141,9 +143,16 @@ class PSMNet(nn.Module):
         targetimg_fea = self.feature_extraction(right)
 
         # matching
-        cost = Variable(
-            torch.cuda.FloatTensor(refimg_fea.size()[0], refimg_fea.size()[1] * 2, self.maxdisp // 4, refimg_fea.size()[2],
-                              refimg_fea.size()[3]).zero_())
+        if torch.cuda.is_available():
+            cost = Variable(
+                torch.cuda.FloatTensor(refimg_fea.size()[0], refimg_fea.size()[1] * 2, self.maxdisp // 4,
+                                       refimg_fea.size()[2],
+                                       refimg_fea.size()[3]).zero_())
+        else:
+            cost = Variable(
+                torch.FloatTensor(refimg_fea.size()[0], refimg_fea.size()[1] * 2, self.maxdisp // 4,
+                                  refimg_fea.size()[2],
+                                  refimg_fea.size()[3]).zero_())
 
         for i in range(self.maxdisp // 4):
             if i > 0:

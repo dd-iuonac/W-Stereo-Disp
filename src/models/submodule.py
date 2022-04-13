@@ -52,14 +52,15 @@ class matchshifted(nn.Module):
         super(matchshifted, self).__init__()
 
     def forward(self, left, right, shift):
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         batch, filters, height, width = left.size()
         shifted_left = F.pad(
             torch.index_select(left, 3, Variable(
-                torch.LongTensor([i for i in range(shift, width)])).cuda()),
+                torch.LongTensor([i for i in range(shift, width)])).to(device)),
             (shift, 0, 0, 0))
         shifted_right = F.pad(
             torch.index_select(right, 3, Variable(
-                torch.LongTensor([i for i in range(width - shift)])).cuda()),
+                torch.LongTensor([i for i in range(width - shift)])).to(device)),
             (shift, 0, 0, 0))
         out = torch.cat((shifted_left, shifted_right), 1).view(
             batch, filters * 2, 1, height, width)
@@ -72,7 +73,7 @@ class depthregression(nn.Module):
         # self.disp = Variable(torch.Tensor(np.reshape(np.array(range(1, 1+maxdepth)), [1, maxdepth, 1, 1])).cuda(),
         #                      requires_grad=False)
         self.disp = torch.arange(
-            1, 1+maxdepth, device='cuda', requires_grad=False).float()[None, :, None, None]
+            1, 1 + maxdepth, device='cuda' if torch.cuda.is_available() else 'cpu', requires_grad=False).float()[None, :, None, None]
 
     def forward(self, x):
         # disp = self.disp.repeat(x.size()[0], 1, x.size()[2], x.size()[3])
@@ -86,7 +87,7 @@ class depthregression_off(nn.Module):
         # self.disp = Variable(torch.Tensor(np.reshape(np.array(range(1, 1+maxdepth)), [1, maxdepth, 1, 1])).cuda(),
         #                      requires_grad=False)
         self.disp = torch.arange(
-            1, 1+maxdepth, device='cuda', requires_grad=False).float()[None, :, None, None]
+            1, 1 + maxdepth, device='cuda' if torch.cuda.is_available() else 'cpu', requires_grad=False).float()[None, :, None, None]
 
     def forward(self, x, off):
         # disp = self.disp.repeat(x.size()[0], 1, x.size()[2], x.size()[3])
@@ -99,12 +100,12 @@ class depthregression_std(nn.Module):
         super(depthregression_std, self).__init__()
         # self.disp = Variable(torch.Tensor(np.reshape(np.array(range(1, 1+maxdepth)), [1, maxdepth, 1, 1])).cuda(), requires_grad=False)
         self.disp = torch.arange(
-            1, 1+maxdepth, device='cuda', requires_grad=False).float()[None, :, None, None]
+            1, 1 + maxdepth, device='cuda' if torch.cuda.is_available() else 'cpu', requires_grad=False).float()[None, :, None, None]
 
     def forward(self, x, predict):
-        disp = (self.disp - predict[:, None, :, :])**2
+        disp = (self.disp - predict[:, None, :, :]) ** 2
 
-        out = torch.sum(x*disp, 1)
+        out = torch.sum(x * disp, 1)
         out = torch.log(out)
         return out
 
@@ -113,14 +114,14 @@ class disparityregression_std(nn.Module):
     def __init__(self, maxdisp):
         super(disparityregression_std, self).__init__()
         # self.disp = Variable(torch.Tensor(np.reshape(np.array(range(maxdisp)),[1,maxdisp,1,1])).cuda(), requires_grad=False)
-        self.disp = torch.arange(maxdisp, device='cuda', requires_grad=False).float()[
-            None, :, None, None]
+        self.disp = torch.arange(maxdisp, device='cuda' if torch.cuda.is_available() else 'cpu', requires_grad=False).float()[
+                    None, :, None, None]
 
     def forward(self, x, predict):
-        disp = (self.disp - predict[:, None, :, :])**2
+        disp = (self.disp - predict[:, None, :, :]) ** 2
 
-        out = torch.sum(x*disp, 1)
-        out = out**0.5
+        out = torch.sum(x * disp, 1)
+        out = out ** 0.5
         return out
 
 
@@ -129,8 +130,8 @@ class disparityregression(nn.Module):
         super(disparityregression, self).__init__()
         # self.disp = Variable(torch.Tensor(np.reshape(np.array(range(maxdisp)), [1, maxdisp, 1, 1])).cuda(),
         #                      requires_grad=False)
-        self.disp = torch.arange(maxdisp, devices='cuda', requires_grad=False).float()[
-            None, :, None, None]
+        self.disp = torch.arange(maxdisp, devices='cuda' if torch.cuda.is_available() else 'cpu', requires_grad=False).float()[
+                    None, :, None, None]
 
     def forward(self, x):
         # disp = self.disp.repeat(x.size()[0], 1, x.size()[2], x.size()[3])
@@ -200,19 +201,19 @@ class feature_extraction_nodownsample(nn.Module):
 
         output_branch1 = self.branch1(output_skip)
         output_branch1 = F.upsample(output_branch1, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch2 = self.branch2(output_skip)
         output_branch2 = F.upsample(output_branch2, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch3 = self.branch3(output_skip)
         output_branch3 = F.upsample(output_branch3, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch4 = self.branch4(output_skip)
         output_branch4 = F.upsample(output_branch4, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_feature = torch.cat(
             (output_raw, output_skip, output_branch4, output_branch3, output_branch2, output_branch1), 1)
@@ -283,19 +284,19 @@ class feature_extraction_full(nn.Module):
 
         output_branch1 = self.branch1(output_skip)
         output_branch1 = F.upsample(output_branch1, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch2 = self.branch2(output_skip)
         output_branch2 = F.upsample(output_branch2, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch3 = self.branch3(output_skip)
         output_branch3 = F.upsample(output_branch3, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch4 = self.branch4(output_skip)
         output_branch4 = F.upsample(output_branch4, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_feature = torch.cat(
             (output_raw, output_skip, output_branch4, output_branch3, output_branch2, output_branch1), 1)
@@ -366,19 +367,19 @@ class feature_extraction(nn.Module):
 
         output_branch1 = self.branch1(output_skip)
         output_branch1 = F.upsample(output_branch1, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch2 = self.branch2(output_skip)
         output_branch2 = F.upsample(output_branch2, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch3 = self.branch3(output_skip)
         output_branch3 = F.upsample(output_branch3, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch4 = self.branch4(output_skip)
         output_branch4 = F.upsample(output_branch4, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_feature = torch.cat(
             (output_raw, output_skip, output_branch4, output_branch3, output_branch2, output_branch1), 1)
@@ -449,19 +450,19 @@ class feature_extraction_edge(nn.Module):
 
         output_branch1 = self.branch1(output_skip)
         output_branch1 = F.upsample(output_branch1, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch2 = self.branch2(output_skip)
         output_branch2 = F.upsample(output_branch2, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch3 = self.branch3(output_skip)
         output_branch3 = F.upsample(output_branch3, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_branch4 = self.branch4(output_skip)
         output_branch4 = F.upsample(output_branch4, (output_skip.size()[
-                                    2], output_skip.size()[3]), mode='bilinear')
+                                                         2], output_skip.size()[3]), mode='bilinear')
 
         output_feature = torch.cat(
             (output_raw, output_skip, output_branch4, output_branch3, output_branch2, output_branch1), 1)

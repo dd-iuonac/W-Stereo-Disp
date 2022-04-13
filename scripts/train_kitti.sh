@@ -1,0 +1,1 @@
+python ./src/main_depth.py -c ./src/configs/kitti_w1.config --datapath /home/daniel/Datasets/Kitti3D/training --split_train ./split/trainval.txt --save_path ./results/sdn_kitti_trainval --resume ./results/sdn_kitti_trainval/checkpoint.pth.tar

@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import torch.nn.parallel
 import torch.optim as optim
 import torch.utils.data
+from matplotlib import pyplot as plt
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import MultiStepLR, StepLR
 from tqdm import tqdm
@@ -97,7 +98,8 @@ parser.add_argument('--data_list', default=None,
                     help='generate depth maps for all the data in this list')
 parser.add_argument('--data_tag', default=None,
                     help='the suffix of the depth maps folder')
-
+parser.add_argument('--workers', default=6,
+                    help='The number of workers')
 args = parser.parse_args()
 best_RMSE = 1e10
 
@@ -115,7 +117,7 @@ def interpolate_value(x, indices, maxdepth=args.maxdepth):
 
     # B,D,H,W to B,H,W,D
     x = x.permute(0, 2, 3, 1)
-    indices = torch.unsqueeze(indices-1, -1)
+    indices = torch.unsqueeze(indices - 1, -1)
 
     indices = torch.clamp(indices, 0, maxdepth - 1)
     idx0 = torch.floor(indices).long()
@@ -138,7 +140,8 @@ def W_loss(input, target, off, mask, epoch, reduction='mean', p=1, scale=1):
     input = input.permute(0, 2, 3, 1)
 
     grid = torch.arange(
-        1, 1+args.maxdepth // scale, device='cuda', requires_grad=False).float()[None, None, None, :]
+        1, 1 + args.maxdepth // scale, device='cuda' if torch.cuda.is_available() else 'cpu',
+        requires_grad=False).float()[None, None, None, :]
     depth = (grid + off) * scale
     target = target.unsqueeze(3)
     if p == 1:
@@ -158,7 +161,7 @@ def main():
     global best_RMSE
 
     if use_losswise:
-        lw = utils_func.LossWise(args.api_key, args.losswise_tag, args.epochs-1)
+        lw = utils_func.LossWise(args.api_key, args.losswise_tag, args.epochs - 1)
     # set logger
     log = logger.setup_logger(os.path.join(args.save_path, 'training.log'))
     for key, value in sorted(vars(args).items()):
@@ -173,7 +176,7 @@ def main():
         import dataloader.KITTI_submission_loader as KITTI_submission_loader
         TestImgLoader = torch.utils.data.DataLoader(
             KITTI_submission_loader.SubmiteDataset(args.datapath, args.data_list, args.dynamic_bs),
-            batch_size=args.bval, shuffle=False, num_workers=args.workers, drop_last=False)
+            batch_size=args.bval, shuffle=False, num_workers=int(args.workers), drop_last=False)
     elif args.dataset == 'kitti':
         train_data, val_data = KITTILoader3D.dataloader(
             args.datapath, args.split_train, args.split_val, kitti2015=args.kitti2015)
@@ -196,7 +199,7 @@ def main():
 
     # Load Model
     if args.data_type == 'disparity':
-        model = disp_models.__dict__[args.arch](maxdisp=args.maxdisp)
+        model = disp_models.__dict__[args.arch](maxdisp=args.maxdisp, down=args.down)
     elif args.data_type == 'depth':
         model = models.__dict__[args.arch](
             maxdepth=args.maxdepth, maxdisp=args.maxdisp, down=args.down, scale=args.scale)
@@ -207,8 +210,13 @@ def main():
     # Number of parameters
     log.info('Number of model parameters: {}'.format(
         sum([p.data.nelement() for p in model.parameters()])))
-    model = nn.DataParallel(model).cuda()
-    torch.backends.cudnn.benchmark = True
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model = nn.DataParallel(model).to(device)
+
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
 
     # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999))
@@ -241,10 +249,13 @@ def main():
 
         tqdm_eval_loader = tqdm(TestImgLoader, total=len(TestImgLoader))
         for batch_idx, (imgL_crop, imgR_crop, calib, H, W, filename) in enumerate(tqdm_eval_loader):
-            pred_disp = inference(imgL_crop, imgR_crop, calib, model)
+            pred_disp = inference(imgL_crop, imgR_crop, calib, model, device)
             for idx, name in enumerate(filename):
-                np.save(args.save_path + '/depth_maps/' + args.data_tag +
-                        '/' + name, pred_disp[idx][-H[idx]:, :W[idx]])
+                # np.save(args.save_path + '/depth_maps/' + args.data_tag +
+                #         '/' + name, pred_disp[idx][-H[idx]:, :W[idx]])
+                plt.imsave(args.save_path + '/depth_maps/' + args.data_tag +
+                           '/' + name + ".png", pred_disp[idx][-H[idx]:, :W[idx]])
+
         import sys
         sys.exit()
 
@@ -269,7 +280,7 @@ def main():
         tqdm_train_loader = tqdm(TrainImgLoader, total=len(TrainImgLoader))
         for batch_idx, (imgL_crop, imgR_crop, disp_crop_L, calib) in enumerate(tqdm_train_loader):
             # start_time = time.time()
-            train(imgL_crop, imgR_crop, disp_crop_L, calib, train_metric, optimizer, model, epoch)
+            train(imgL_crop, imgR_crop, disp_crop_L, calib, train_metric, optimizer, model, epoch, device)
             # log.info(train_metric.print(batch_idx, 'TRAIN') + ' Time:{:.3f}'.format(time.time() - start_time))
         log.info(train_metric.print(0, 'TRAIN Epoch' + str(epoch)))
         train_metric.tensorboard(writer, epoch, token='TRAIN')
@@ -283,7 +294,7 @@ def main():
             tqdm_test_loader = tqdm(TestImgLoader, total=len(TestImgLoader))
             for batch_idx, (imgL_crop, imgR_crop, disp_crop_L, calib) in enumerate(tqdm_test_loader):
                 # start_time = time.time()
-                test(imgL_crop, imgR_crop, disp_crop_L, calib, test_metric, optimizer, model)
+                test(imgL_crop, imgR_crop, disp_crop_L, calib, test_metric, optimizer, model, device)
                 # log.info(test_metric.print(batch_idx, 'TEST') + ' Time:{:.3f}'.format(time.time() - start_time))
             log.info(test_metric.print(0, 'TEST Epoch' + str(epoch)))
             test_metric.tensorboard(writer, epoch, token='TEST')
@@ -310,15 +321,15 @@ def save_checkpoint(state, is_best, epoch, filename='checkpoint.pth.tar', folder
     torch.save(state, folder + '/' + filename)
     if is_best:
         shutil.copyfile(folder + '/' + filename, folder + '/model_best.pth.tar')
-    if args.checkpoint_interval > 0 and (epoch+1) % args.checkpoint_interval == 0:
-        shutil.copyfile(folder + '/' + filename, folder + '/checkpoint_{}.pth.tar'.format(epoch+1))
+    if args.checkpoint_interval > 0 and (epoch + 1) % args.checkpoint_interval == 0:
+        shutil.copyfile(folder + '/' + filename, folder + '/checkpoint_{}.pth.tar'.format(epoch + 1))
 
 
-def train(imgL, imgR, depth, calib, metric_log, optimizer, model, epoch):
+def train(imgL, imgR, depth, calib, metric_log, optimizer, model, epoch, device):
     model.train()
     calib = calib.float()
 
-    imgL, imgR, depth, calib = imgL.cuda(), imgR.cuda(), depth.cuda(), calib.cuda()
+    imgL, imgR, depth, calib = imgL.to(device), imgR.to(device), depth.to(device), calib.to(device)
 
     # ---------
     mask = (depth >= 1) * (depth <= 80)
@@ -338,9 +349,14 @@ def train(imgL, imgR, depth, calib, metric_log, optimizer, model, epoch):
 
         CustomLoss = utils_func.CriterionParallel(W_loss)
 
-        loss = 0.5 * CustomLoss(output1, depth, off1, mask, epoch, reduction='mean', p=args.w_p, scale=args.scale) + 0.7 * CustomLoss(
-            output2, depth, off2, mask, epoch, reduction='mean', p=args.w_p, scale=args.scale) + CustomLoss(output3, depth, off3, mask, epoch,
-                                                                                                            reduction='mean', p=args.w_p, scale=args.scale)
+        loss = 0.5 * CustomLoss(output1, depth, off1, mask, epoch, reduction='mean', p=args.w_p,
+                                scale=args.scale) + 0.7 * CustomLoss(
+            output2, depth, off2, mask, epoch, reduction='mean', p=args.w_p, scale=args.scale) + CustomLoss(output3,
+                                                                                                            depth, off3,
+                                                                                                            mask, epoch,
+                                                                                                            reduction='mean',
+                                                                                                            p=args.w_p,
+                                                                                                            scale=args.scale)
 
         with torch.no_grad():
             _, pred3_out = torch.max(output3, 1)
@@ -362,9 +378,9 @@ def train(imgL, imgR, depth, calib, metric_log, optimizer, model, epoch):
     optimizer.step()
 
 
-def inference(imgL, imgR, calib, model):
+def inference(imgL, imgR, calib, model, device):
     model.eval()
-    imgL, imgR, calib = imgL.cuda(), imgR.cuda(), calib.float().cuda()
+    imgL, imgR, calib = imgL.to(device), imgR.to(device), calib.float().to(device)
 
     with torch.no_grad():
         output = model(imgL, imgR, calib)
@@ -375,10 +391,10 @@ def inference(imgL, imgR, calib, model):
     return pred_depth
 
 
-def test(imgL, imgR, depth, calib, metric_log, optimizer, model):
+def test(imgL, imgR, depth, calib, metric_log, optimizer, model, device):
     model.eval()
     calib = calib.float()
-    imgL, imgR, calib, depth = imgL.cuda(), imgR.cuda(), calib.cuda(), depth.cuda()
+    imgL, imgR, calib, depth = imgL.to(device), imgR.to(device), calib.to(device), depth.to(device)
 
     mask = (depth >= 1) * (depth <= 80)
     mask.detach_()
@@ -392,8 +408,8 @@ def test(imgL, imgR, depth, calib, metric_log, optimizer, model):
 
         # computing 3-px error#
         metric_log.calculate(depth, output3, loss=loss.item())
-
-    torch.cuda.empty_cache()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     return
 
 

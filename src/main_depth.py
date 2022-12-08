@@ -233,7 +233,7 @@ def main():
     if args.resume:
         if os.path.isfile(args.resume):
             log.info("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
+            checkpoint = torch.load(args.resume, map_location=torch.device('cpu'))
             model.load_state_dict(checkpoint['state_dict'])
             args.start_epoch = checkpoint['epoch']
             optimizer.load_state_dict(checkpoint['optimizer'])

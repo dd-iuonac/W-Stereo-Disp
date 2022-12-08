@@ -5,3 +5,5 @@ losswise~=4.0
 tqdm~=4.62.3
 tensorboardX~=2.4.1
 torchvision~=0.11.1
+protobuf==3.20.0
+matplotlib==3.5.3
